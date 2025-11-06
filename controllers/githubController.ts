@@ -50,7 +50,7 @@ export const syncGithubData = async (
     };
 
     // Fetch and store organizations
-    // console.log("Fetching organizations...");
+    console.log("Fetching organizations...");
     const organizations = await getUserOrganizations(accessToken);
 
     for (const org of organizations) {
@@ -79,12 +79,12 @@ export const syncGithubData = async (
       await new Promise((resolve) => setImmediate(resolve));
     }
 
-    // console.log(`Synced ${syncStats.organizations} organizations`);
+    console.log(`Synced ${syncStats.organizations} organizations`);
     for (const org of organizations) {
       const orgDoc = await Organization.findOne({ githubId: org.id });
       if (!orgDoc) continue;
 
-      // console.log(`Fetching repositories for organization: ${org.login}`);
+      console.log(`Fetching repositories for organization: ${org.login}`);
       const repos = await getOrganizationRepos(accessToken, org.login);
 
       // Store repos
@@ -124,7 +124,7 @@ export const syncGithubData = async (
         await new Promise((resolve) => setImmediate(resolve));
 
         // commits fetching
-        // console.log(`Fetching commits for repository: ${repo.full_name}`);
+        console.log(`Fetching commits for repository: ${repo.full_name}`);
         try {
           const commits = await getRepoCommits(
             accessToken,
@@ -174,7 +174,7 @@ export const syncGithubData = async (
         }
 
         // Fetch pull requests
-        // console.log(`Fetching pull requests for repository: ${repo.full_name}`);
+        console.log(`Fetching pull requests for repository: ${repo.full_name}`);
         try {
           const pullRequests = await getRepoPullRequests(
             accessToken,
@@ -238,7 +238,7 @@ export const syncGithubData = async (
         }
 
         // issues
-        // console.log(`Fetching issues for repository: ${repo.full_name}`);
+        console.log(`Fetching issues for repository: ${repo.full_name}`);
         try {
           const issues = await getRepoIssues(
             accessToken,
@@ -411,7 +411,7 @@ export const syncGithubData = async (
     integration.lastSyncedAt = new Date();
     await integration.save();
 
-    // console.log("Sync completed successfully");
+    console.log("Sync completed successfully");
     res.json({
       success: true,
       message: "GitHub data synced successfully",
