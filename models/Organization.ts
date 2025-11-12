@@ -68,9 +68,8 @@ const OrganizationSchema: Schema = new Schema(
   }
 );
 
-// indexing fields
+// indexing fields (githubId unique index is already defined in schema)
 OrganizationSchema.index({ integrationId: 1 });
-OrganizationSchema.index({ githubId: 1 }, { unique: true });
 OrganizationSchema.index({ login: "text", name: "text", description: "text" }); // Text index for search
 OrganizationSchema.index({ login: 1 });
 

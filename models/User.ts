@@ -97,10 +97,9 @@ const UserSchema: Schema = new Schema(
   }
 );
 
-// indexing fields
+// indexing fields (githubId unique index is already defined in schema)
 UserSchema.index({ integrationId: 1 });
 UserSchema.index({ organizationId: 1 });
-UserSchema.index({ githubId: 1 }, { unique: true });
 UserSchema.index({ integrationId: 1, organizationId: 1 });
 UserSchema.index({ login: "text", name: "text", bio: "text" }); // Text index for search
 UserSchema.index({ login: 1 });

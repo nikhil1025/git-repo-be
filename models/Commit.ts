@@ -73,10 +73,9 @@ const CommitSchema: Schema = new Schema(
   }
 );
 
-// indexing fields
+// indexing fields (sha unique index is already defined in schema)
 CommitSchema.index({ integrationId: 1 });
 CommitSchema.index({ repositoryId: 1 });
-CommitSchema.index({ sha: 1 }, { unique: true });
 CommitSchema.index({ integrationId: 1, repositoryId: 1 });
 CommitSchema.index({ message: "text" }); // Text index for search
 CommitSchema.index({ "author.email": 1 });
