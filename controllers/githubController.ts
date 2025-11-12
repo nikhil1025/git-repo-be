@@ -363,7 +363,7 @@ export const syncGithubData = async (
       }
 
       // users
-      // console.log(`Fetching members for organization: ${org.login}`);
+      console.log(`Fetching members for organization: ${org.login}`);
       try {
         const members = await getOrganizationMembers(accessToken, org.login);
 
