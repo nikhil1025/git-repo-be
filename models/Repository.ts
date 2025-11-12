@@ -103,7 +103,7 @@ const RepositorySchema: Schema = new Schema(
   }
 );
 
-// indexing fields (githubId unique index is already defined in schema)
+// indexing fields
 RepositorySchema.index({ integrationId: 1 });
 RepositorySchema.index({ organizationId: 1 });
 RepositorySchema.index({ integrationId: 1, organizationId: 1 });

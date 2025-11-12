@@ -73,7 +73,7 @@ const CommitSchema: Schema = new Schema(
   }
 );
 
-// indexing fields (sha unique index is already defined in schema)
+// indexing fields
 CommitSchema.index({ integrationId: 1 });
 CommitSchema.index({ repositoryId: 1 });
 CommitSchema.index({ integrationId: 1, repositoryId: 1 });
