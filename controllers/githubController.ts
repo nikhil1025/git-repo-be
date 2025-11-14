@@ -1,11 +1,8 @@
 import { Request, Response } from "express";
+import path from "path";
 import {
-  getIssueEvents,
   getOrganizationMembers,
   getOrganizationRepos,
-  getRepoCommits,
-  getRepoIssues,
-  getRepoPullRequests,
   getUserOrganizations,
 } from "../helpers/github";
 import Commit from "../models/Commit";
@@ -16,6 +13,233 @@ import Organization from "../models/Organization";
 import PullRequest from "../models/PullRequest";
 import Repository from "../models/Repository";
 import User from "../models/User";
+import WorkerPool from "../utils/workerPool";
+
+const repoWorkerPool = new WorkerPool({
+  workerPath: path.resolve(__dirname, "../workers/repoSyncWorker.ts"),
+  size: parseInt(process.env.REPO_WORKER_POOL_SIZE || "4", 10),
+});
+
+type SyncStats = {
+  organizations: number;
+  repositories: number;
+  commits: number;
+  pullRequests: number;
+  issues: number;
+  issueChangelogs: number;
+  users: number;
+};
+
+const REPO_PROCESS_CONCURRENCY = parseInt(
+  process.env.REPO_PROCESS_CONCURRENCY ||
+    process.env.REPO_WORKER_POOL_SIZE ||
+    "4",
+  10
+);
+
+const processRepositoryData = async (params: {
+  repo: any;
+  repoDoc: any;
+  integration: any;
+  accessToken: string;
+  syncStats: SyncStats;
+}): Promise<void> => {
+  const { repo, repoDoc, integration, accessToken, syncStats } = params;
+
+  console.log(`Dispatching worker for repository: ${repo.full_name}`);
+  try {
+    const { commits, pullRequests, issues, issueEvents } =
+      await repoWorkerPool.runTask({
+        accessToken,
+        owner: repo.owner.login,
+        repo: repo.name,
+      });
+
+    const commitOps = commits.map((commit: any) => ({
+      updateOne: {
+        filter: { sha: commit.sha },
+        update: {
+          integrationId: integration._id,
+          repositoryId: repoDoc._id,
+          sha: commit.sha,
+          message: commit.commit?.message,
+          author: {
+            name: commit.commit?.author?.name,
+            email: commit.commit?.author?.email,
+            date: commit.commit?.author?.date,
+          },
+          committer: {
+            name: commit.commit?.committer?.name,
+            email: commit.commit?.committer?.email,
+            date: commit.commit?.committer?.date,
+          },
+          html_url: commit.html_url,
+          parents: commit.parents?.map((p: any) => ({ sha: p.sha })),
+          stats: {
+            additions: commit.stats?.additions,
+            deletions: commit.stats?.deletions,
+            total: commit.stats?.total,
+          },
+        },
+        upsert: true,
+      },
+    }));
+
+    if (commitOps.length > 0) {
+      await Commit.bulkWrite(commitOps);
+      syncStats.commits += commits.length;
+    }
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const prOps = pullRequests.map((pr: any) => ({
+      updateOne: {
+        filter: { repositoryId: repoDoc._id, number: pr.number },
+        update: {
+          integrationId: integration._id,
+          repositoryId: repoDoc._id,
+          githubId: pr.id,
+          number: pr.number,
+          title: pr.title,
+          state: pr.state,
+          body: pr.body,
+          html_url: pr.html_url,
+          created_at: pr.created_at,
+          updated_at: pr.updated_at,
+          closed_at: pr.closed_at,
+          merged_at: pr.merged_at,
+          user: {
+            login: pr.user?.login,
+            id: pr.user?.id,
+            avatar_url: pr.user?.avatar_url,
+          },
+          head: {
+            ref: pr.head?.ref,
+            sha: pr.head?.sha,
+          },
+          base: {
+            ref: pr.base?.ref,
+            sha: pr.base?.sha,
+          },
+          merged: pr.merged,
+          mergeable: pr.mergeable,
+          comments: pr.comments,
+          commits: pr.commits,
+          additions: pr.additions,
+          deletions: pr.deletions,
+          changed_files: pr.changed_files,
+        },
+        upsert: true,
+      },
+    }));
+
+    if (prOps.length > 0) {
+      await PullRequest.bulkWrite(prOps);
+      syncStats.pullRequests += pullRequests.length;
+    }
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const issueOps = issues.map((issue: any) => ({
+      updateOne: {
+        filter: { repositoryId: repoDoc._id, number: issue.number },
+        update: {
+          integrationId: integration._id,
+          repositoryId: repoDoc._id,
+          githubId: issue.id,
+          number: issue.number,
+          title: issue.title,
+          state: issue.state,
+          body: issue.body,
+          html_url: issue.html_url,
+          created_at: issue.created_at,
+          updated_at: issue.updated_at,
+          closed_at: issue.closed_at,
+          user: {
+            login: issue.user?.login,
+            id: issue.user?.id,
+            avatar_url: issue.user?.avatar_url,
+          },
+          labels: issue.labels?.map((label: any) => ({
+            id: label.id,
+            name: label.name,
+            color: label.color,
+          })),
+          assignees: issue.assignees?.map((assignee: any) => ({
+            login: assignee.login,
+            id: assignee.id,
+          })),
+          comments: issue.comments,
+          locked: issue.locked,
+        },
+        upsert: true,
+      },
+    }));
+
+    if (issueOps.length > 0) {
+      await Issue.bulkWrite(issueOps);
+      syncStats.issues += issues.length;
+    }
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    for (const issue of issues) {
+      const issueDoc = await Issue.findOne({
+        repositoryId: repoDoc._id,
+        number: issue.number,
+      });
+
+      if (issueDoc) {
+        const events = issueEvents?.[issue.number] || [];
+        const eventOps = events.map((event: any) => ({
+          updateOne: {
+            filter: {
+              issueId: issueDoc._id,
+              githubEventId: event.id,
+            },
+            update: {
+              integrationId: integration._id,
+              repositoryId: repoDoc._id,
+              issueId: issueDoc._id,
+              githubEventId: event.id,
+              event: event.event,
+              created_at: event.created_at,
+              actor: {
+                login: event.actor?.login,
+                id: event.actor?.id,
+              },
+              label: event.label
+                ? {
+                    name: event.label.name,
+                    color: event.label.color,
+                  }
+                : undefined,
+              assignee: event.assignee
+                ? {
+                    login: event.assignee.login,
+                    id: event.assignee.id,
+                  }
+                : undefined,
+              rename: event.rename,
+              commit_id: event.commit_id,
+              commit_url: event.commit_url,
+            },
+            upsert: true,
+          },
+        }));
+
+        if (eventOps.length > 0) {
+          await IssueChangelog.bulkWrite(eventOps);
+          syncStats.issueChangelogs += events.length;
+        }
+
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+  } catch (error) {
+    console.error(`Error processing repository ${repo.full_name}:`, error);
+  }
+};
 
 export const syncGithubData = async (
   req: Request,
@@ -87,6 +311,8 @@ export const syncGithubData = async (
       console.log(`Fetching repositories for organization: ${org.login}`);
       const repos = await getOrganizationRepos(accessToken, org.login);
 
+      const activeRepoTasks = new Set<Promise<void>>();
+
       // Store repos
       for (const repo of repos) {
         const repoDoc = await Repository.findOneAndUpdate(
@@ -122,244 +348,25 @@ export const syncGithubData = async (
         syncStats.repositories++;
 
         await new Promise((resolve) => setImmediate(resolve));
+        const taskPromise = processRepositoryData({
+          repo,
+          repoDoc,
+          integration,
+          accessToken,
+          syncStats,
+        }).finally(() => {
+          activeRepoTasks.delete(taskPromise);
+        });
 
-        // commits fetching
-        console.log(`Fetching commits for repository: ${repo.full_name}`);
-        try {
-          const commits = await getRepoCommits(
-            accessToken,
-            repo.owner.login,
-            repo.name
-          );
+        activeRepoTasks.add(taskPromise);
 
-          // inserting commits to db
-          const commitOps = commits.map((commit) => ({
-            updateOne: {
-              filter: { sha: commit.sha },
-              update: {
-                integrationId: integration._id,
-                repositoryId: repoDoc._id,
-                sha: commit.sha,
-                message: commit.commit?.message,
-                author: {
-                  name: commit.commit?.author?.name,
-                  email: commit.commit?.author?.email,
-                  date: commit.commit?.author?.date,
-                },
-                committer: {
-                  name: commit.commit?.committer?.name,
-                  email: commit.commit?.committer?.email,
-                  date: commit.commit?.committer?.date,
-                },
-                html_url: commit.html_url,
-                parents: commit.parents?.map((p: any) => ({ sha: p.sha })),
-                stats: {
-                  additions: commit.stats?.additions,
-                  deletions: commit.stats?.deletions,
-                  total: commit.stats?.total,
-                },
-              },
-              upsert: true,
-            },
-          }));
-
-          if (commitOps.length > 0) {
-            await Commit.bulkWrite(commitOps);
-            syncStats.commits += commits.length;
-          }
-
-          await new Promise((resolve) => setImmediate(resolve));
-        } catch (error) {
-          console.error(`Error fetching commits for ${repo.full_name}:`, error);
+        if (activeRepoTasks.size >= REPO_PROCESS_CONCURRENCY) {
+          await Promise.race(activeRepoTasks);
         }
+      }
 
-        // Fetch pull requests
-        console.log(`Fetching pull requests for repository: ${repo.full_name}`);
-        try {
-          const pullRequests = await getRepoPullRequests(
-            accessToken,
-            repo.owner.login,
-            repo.name
-          );
-
-          // updating pull-requests
-          const prOps = pullRequests.map((pr) => ({
-            updateOne: {
-              filter: { repositoryId: repoDoc._id, number: pr.number },
-              update: {
-                integrationId: integration._id,
-                repositoryId: repoDoc._id,
-                githubId: pr.id,
-                number: pr.number,
-                title: pr.title,
-                state: pr.state,
-                body: pr.body,
-                html_url: pr.html_url,
-                created_at: pr.created_at,
-                updated_at: pr.updated_at,
-                closed_at: pr.closed_at,
-                merged_at: pr.merged_at,
-                user: {
-                  login: pr.user?.login,
-                  id: pr.user?.id,
-                  avatar_url: pr.user?.avatar_url,
-                },
-                head: {
-                  ref: pr.head?.ref,
-                  sha: pr.head?.sha,
-                },
-                base: {
-                  ref: pr.base?.ref,
-                  sha: pr.base?.sha,
-                },
-                merged: pr.merged,
-                mergeable: pr.mergeable,
-                comments: pr.comments,
-                commits: pr.commits,
-                additions: pr.additions,
-                deletions: pr.deletions,
-                changed_files: pr.changed_files,
-              },
-              upsert: true,
-            },
-          }));
-
-          if (prOps.length > 0) {
-            await PullRequest.bulkWrite(prOps);
-            syncStats.pullRequests += pullRequests.length;
-          }
-
-          await new Promise((resolve) => setImmediate(resolve));
-        } catch (error) {
-          console.error(
-            `Error fetching pull requests for ${repo.full_name}:`,
-            error
-          );
-        }
-
-        // issues
-        console.log(`Fetching issues for repository: ${repo.full_name}`);
-        try {
-          const issues = await getRepoIssues(
-            accessToken,
-            repo.owner.login,
-            repo.name
-          );
-
-          const issueOps = issues.map((issue) => ({
-            updateOne: {
-              filter: { repositoryId: repoDoc._id, number: issue.number },
-              update: {
-                integrationId: integration._id,
-                repositoryId: repoDoc._id,
-                githubId: issue.id,
-                number: issue.number,
-                title: issue.title,
-                state: issue.state,
-                body: issue.body,
-                html_url: issue.html_url,
-                created_at: issue.created_at,
-                updated_at: issue.updated_at,
-                closed_at: issue.closed_at,
-                user: {
-                  login: issue.user?.login,
-                  id: issue.user?.id,
-                  avatar_url: issue.user?.avatar_url,
-                },
-                labels: issue.labels?.map((label: any) => ({
-                  id: label.id,
-                  name: label.name,
-                  color: label.color,
-                })),
-                assignees: issue.assignees?.map((assignee: any) => ({
-                  login: assignee.login,
-                  id: assignee.id,
-                })),
-                comments: issue.comments,
-                locked: issue.locked,
-              },
-              upsert: true,
-            },
-          }));
-
-          if (issueOps.length > 0) {
-            await Issue.bulkWrite(issueOps);
-            syncStats.issues += issues.length;
-          }
-
-          await new Promise((resolve) => setImmediate(resolve));
-
-          // changelogs
-          for (const issue of issues) {
-            try {
-              const issueDoc = await Issue.findOne({
-                repositoryId: repoDoc._id,
-                number: issue.number,
-              });
-
-              if (issueDoc) {
-                const events = await getIssueEvents(
-                  accessToken,
-                  repo.owner.login,
-                  repo.name,
-                  issue.number
-                );
-
-                // update changelogs
-                const eventOps = events.map((event) => ({
-                  updateOne: {
-                    filter: {
-                      issueId: issueDoc._id,
-                      githubEventId: event.id,
-                    },
-                    update: {
-                      integrationId: integration._id,
-                      repositoryId: repoDoc._id,
-                      issueId: issueDoc._id,
-                      githubEventId: event.id,
-                      event: event.event,
-                      created_at: event.created_at,
-                      actor: {
-                        login: event.actor?.login,
-                        id: event.actor?.id,
-                      },
-                      label: event.label
-                        ? {
-                            name: event.label.name,
-                            color: event.label.color,
-                          }
-                        : undefined,
-                      assignee: event.assignee
-                        ? {
-                            login: event.assignee.login,
-                            id: event.assignee.id,
-                          }
-                        : undefined,
-                      rename: event.rename,
-                      commit_id: event.commit_id,
-                      commit_url: event.commit_url,
-                    },
-                    upsert: true,
-                  },
-                }));
-
-                if (eventOps.length > 0) {
-                  await IssueChangelog.bulkWrite(eventOps);
-                  syncStats.issueChangelogs += events.length;
-                }
-
-                await new Promise((resolve) => setImmediate(resolve));
-              }
-            } catch (error) {
-              console.error(
-                `Error fetching events for issue #${issue.number}:`,
-                error
-              );
-            }
-          }
-        } catch (error) {
-          console.error(`Error fetching issues for ${repo.full_name}:`, error);
-        }
+      if (activeRepoTasks.size > 0) {
+        await Promise.all(activeRepoTasks);
       }
 
       // users
