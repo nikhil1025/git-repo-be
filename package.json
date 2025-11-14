@@ -7,7 +7,10 @@
     "start": "node dist/app.js",
     "dev": "nodemon --watch . --ext ts --exec ./node_modules/.bin/ts-node app.ts",
     "build": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "fix:all": "node scripts/fix-all.js",
+    "fix:indexes": "node scripts/fix-text-index.js",
+    "fix:nulls": "node scripts/fix-null-fields.js"
   },
   "keywords": [],
   "author": "",

@@ -150,7 +150,15 @@ export const getRepoCommits = async (
     }
 
     return commits;
-  } catch (error) {
+  } catch (error: any) {
+    // Handle empty repository (409 error)
+    if (
+      error.response?.status === 409 &&
+      error.response?.data?.message?.includes("empty")
+    ) {
+      console.log(`Repository ${owner}/${repo} is empty, skipping commits.`);
+      return [];
+    }
     console.error(`Error fetching commits for ${owner}/${repo}:`, error);
     throw error;
   }

@@ -52,9 +52,11 @@ const RepositorySchema: Schema = new Schema(
     },
     description: {
       type: String,
+      set: (v: any) => v || undefined,
     },
     html_url: {
       type: String,
+      set: (v: any) => v || undefined,
     },
     private: {
       type: Boolean,
@@ -82,6 +84,7 @@ const RepositorySchema: Schema = new Schema(
     },
     language: {
       type: String,
+      set: (v: any) => v || undefined,
     },
     forks_count: {
       type: Number,
@@ -91,6 +94,7 @@ const RepositorySchema: Schema = new Schema(
     },
     default_branch: {
       type: String,
+      set: (v: any) => v || undefined,
     },
     owner: {
       login: { type: String },
@@ -107,11 +111,18 @@ const RepositorySchema: Schema = new Schema(
 RepositorySchema.index({ integrationId: 1 });
 RepositorySchema.index({ organizationId: 1 });
 RepositorySchema.index({ integrationId: 1, organizationId: 1 });
-RepositorySchema.index({
-  name: "text",
-  full_name: "text",
-  description: "text",
-});
+// Text index with explicit language setting to avoid conflict with 'language' field
+RepositorySchema.index(
+  {
+    name: "text",
+    full_name: "text",
+    description: "text",
+  },
+  {
+    default_language: "english",
+    language_override: "search_language", // Use a different field name for language override
+  }
+);
 RepositorySchema.index({ language: 1 });
 RepositorySchema.index({ "owner.login": 1 });
 
