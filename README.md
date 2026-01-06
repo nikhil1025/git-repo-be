@@ -2,8 +2,6 @@
 
 Lightweight Node.js + TypeScript backend that syncs GitHub data (organizations, repositories, commits, pull requests, issues, issue changelogs, and users) into MongoDB and exposes REST APIs used by a separate frontend. The service handles OAuth with GitHub, stores integration records, performs incremental syncs (and full resyncs), and serves data/metadata for client consumption.
 
-> NOTE: The repository scan used to generate this README may be incomplete. To view the full repository in your browser, see: https://github.com/nikhil1025/git-repo-be/tree/main
-
 ## Highlights / Purpose
 
 - Implements GitHub OAuth exchange and stores integration records (access tokens, provider metadata).
